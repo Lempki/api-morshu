@@ -1,6 +1,5 @@
 import os
 
-import pytest
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("DISCORD_API_SECRET", "test-secret")
@@ -58,17 +57,23 @@ def test_synthesize_empty_text_rejected():
 
 def test_synthesize_speed_too_low_rejected():
     # ge=0.5; 0.4 is below the minimum.
-    r = client.post("/tts/synthesize", json={"text": "hello", "speed": 0.4}, headers=AUTH)
+    r = client.post(
+        "/tts/synthesize", json={"text": "hello", "speed": 0.4}, headers=AUTH
+    )
     assert r.status_code == 422
 
 
 def test_synthesize_speed_too_high_rejected():
     # le=2.0; 2.1 exceeds the maximum.
-    r = client.post("/tts/synthesize", json={"text": "hello", "speed": 2.1}, headers=AUTH)
+    r = client.post(
+        "/tts/synthesize", json={"text": "hello", "speed": 2.1}, headers=AUTH
+    )
     assert r.status_code == 422
 
 
 def test_synthesize_invalid_format_rejected():
     # format must be Literal["wav", "video"]; "ogg" is not accepted.
-    r = client.post("/tts/synthesize", json={"text": "hello", "format": "ogg"}, headers=AUTH)
+    r = client.post(
+        "/tts/synthesize", json={"text": "hello", "format": "ogg"}, headers=AUTH
+    )
     assert r.status_code == 422

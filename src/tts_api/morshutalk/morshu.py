@@ -1,6 +1,6 @@
 import random
 import warnings
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 from pydub import AudioSegment  # type: ignore[import-untyped]
@@ -103,7 +103,9 @@ class Morshu:
         text = text.replace("\n", ",,,")
 
         assert _g2p is not None
-        phonemes = _g2p.run_with_progress(text, lambda step, total: progress_callback(0, step, total))
+        phonemes = _g2p.run_with_progress(
+            text, lambda step, total: progress_callback(0, step, total)
+        )
         if _g2p.cancelled:
             return False
 
@@ -132,19 +134,30 @@ class Morshu:
                 phoneme_segment = []
             if p == " ":
                 output = self.append_audio_segment(
-                    output, AudioSegment.silent(self.space_length), -1, audio_out_millis, audio_morshu_millis
+                    output,
+                    AudioSegment.silent(self.space_length),
+                    -1,
+                    audio_out_millis,
+                    audio_morshu_millis,
                 )
             elif p in self.stop_chars:
                 output = self.append_audio_segment(
-                    output, AudioSegment.silent(self.stop_length), -1, audio_out_millis, audio_morshu_millis
+                    output,
+                    AudioSegment.silent(self.stop_length),
+                    -1,
+                    audio_out_millis,
+                    audio_morshu_millis,
                 )
 
         if len(output) == 0:
             warnings.warn("returned audio segment is empty", UserWarning, stacklevel=2)
-            self.audio_segment_timings = np.rec.array((0, 0), names=("output", "morshu"))
+            self.audio_segment_timings = np.rec.array(
+                (0, 0), names=("output", "morshu")
+            )
         else:
             self.audio_segment_timings = np.rec.array(
-                tuple(zip(audio_out_millis, audio_morshu_millis)), names=("output", "morshu")
+                tuple(zip(audio_out_millis, audio_morshu_millis)),
+                names=("output", "morshu"),
             )
 
         progress_callback(1, progress_total, progress_total)
@@ -198,17 +211,23 @@ class Morshu:
         highest_priority = 0
         for i in phoneme_indices:
             morshu_preceding = morshu_rec["phoneme"][i - 1]
-            priority = int(morshu_rec["priority"][i]) if self.use_phoneme_priority else 0
+            priority = (
+                int(morshu_rec["priority"][i]) if self.use_phoneme_priority else 0
+            )
 
             if morshu_preceding == preceding:
                 priority += 10
-            elif any(c in morshu_preceding for c in "AEIOU") and any(c in preceding for c in "AEIOU"):
+            elif any(c in morshu_preceding for c in "AEIOU") and any(
+                c in preceding for c in "AEIOU"
+            ):
                 priority += 5
 
             morshu_succeeding = morshu_rec["phoneme"][i + 1]
             if morshu_succeeding == succeeding:
                 priority += 10
-            elif any(c in morshu_succeeding for c in "AEIOU") and any(c in succeeding for c in "AEIOU"):
+            elif any(c in morshu_succeeding for c in "AEIOU") and any(
+                c in succeeding for c in "AEIOU"
+            ):
                 priority += 1
 
             if priority < highest_priority:
@@ -219,7 +238,9 @@ class Morshu:
             best_indices.append(i)
 
         index = random.choice(best_indices)
-        segment = _morshu_wav[int(morshu_rec["timing"][index - 1]) : int(morshu_rec["timing"][index])]
+        segment = _morshu_wav[
+            int(morshu_rec["timing"][index - 1]) : int(morshu_rec["timing"][index])
+        ]
         return segment, int(morshu_rec["timing"][index - 1])
 
     def append_best_morshu_phoneme_segment(
@@ -238,7 +259,9 @@ class Morshu:
 
         if len(phonemes) == 1:
             segment, start = self.get_best_morshu_single_phoneme(phonemes[0])
-            return Morshu.append_audio_segment(output, segment, start, audio_out_millis, audio_morshu_millis)
+            return Morshu.append_audio_segment(
+                output, segment, start, audio_out_millis, audio_morshu_millis
+            )
 
         preceding = ""
         while phonemes:
@@ -247,7 +270,9 @@ class Morshu:
             start = 0
 
             while sequence_length <= len(phonemes):
-                occurrences = Morshu.get_phoneme_sequence_occurrences(phonemes[:sequence_length])
+                occurrences = Morshu.get_phoneme_sequence_occurrences(
+                    phonemes[:sequence_length]
+                )
                 if not occurrences:
                     break
                 start, end = random.choice(occurrences)
@@ -256,10 +281,16 @@ class Morshu:
             sequence_length -= 1
 
             if sequence_length == 1:
-                succeeding = phonemes[sequence_length] if sequence_length < len(phonemes) else ""
-                segment, start = self.get_best_morshu_single_phoneme(phonemes[0], preceding, succeeding)
+                succeeding = (
+                    phonemes[sequence_length] if sequence_length < len(phonemes) else ""
+                )
+                segment, start = self.get_best_morshu_single_phoneme(
+                    phonemes[0], preceding, succeeding
+                )
 
-            output = Morshu.append_audio_segment(output, segment, start, audio_out_millis, audio_morshu_millis)
+            output = Morshu.append_audio_segment(
+                output, segment, start, audio_out_millis, audio_morshu_millis
+            )
             preceding = phonemes[sequence_length - 1]
             del phonemes[:sequence_length]
 

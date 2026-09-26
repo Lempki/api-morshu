@@ -2,10 +2,9 @@ import asyncio
 import io
 import logging
 import logging.config
-import os
 import subprocess
 import tempfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Annotated
 
@@ -25,10 +24,15 @@ def _configure_logging(level: str) -> None:
             "version": 1,
             "formatters": {
                 "json": {
-                    "format": '{"time":"%(asctime)s","level":"%(levelname)s","name":"%(name)s","message":"%(message)s"}'
+                    "format": (
+                        '{"time":"%(asctime)s","level":"%(levelname)s",'
+                        '"name":"%(name)s","message":"%(message)s"}'
+                    )
                 }
             },
-            "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "json"}},
+            "handlers": {
+                "console": {"class": "logging.StreamHandler", "formatter": "json"}
+            },
             "root": {"level": level, "handlers": ["console"]},
         }
     )
@@ -52,7 +56,9 @@ def _synthesize_blocking(text: str, speed: float, trim_silence: bool) -> bytes:
         return b""
     audio = result
     if speed != 1.0:
-        audio = audio._spawn(audio.raw_data, overrides={"frame_rate": int(audio.frame_rate * speed)})
+        audio = audio._spawn(
+            audio.raw_data, overrides={"frame_rate": int(audio.frame_rate * speed)}
+        )
         audio = audio.set_frame_rate(result.frame_rate)
     if trim_silence:
         audio = audio.strip_silence()
@@ -109,7 +115,9 @@ def _synthesize_video_blocking(text: str) -> bytes:
             wav_path = f.name
             tmp_files.append(wav_path)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as f:
             concat_path = f.name
             tmp_files.append(concat_path)
             f.write("ffconcat version 1.0\n")
@@ -128,28 +136,39 @@ def _synthesize_video_blocking(text: str) -> bytes:
 
         subprocess.run(
             [
-                "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0",
-                "-i", concat_path,
-                "-i", wav_path,
-                "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
-                "-c:v", "libx264", "-preset", "fast",
-                "-c:a", "aac",
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                concat_path,
+                "-i",
+                wav_path,
+                "-vf",
+                "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "fast",
+                "-c:a",
+                "aac",
                 "-shortest",
                 out_path,
             ],
-            capture_output=True, check=True, timeout=120,
+            capture_output=True,
+            check=True,
+            timeout=120,
         )
 
-        with open(out_path, "rb") as f:
+        with Path(out_path).open("rb") as f:
             return f.read()
 
     finally:
         for p in tmp_files:
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
+            with suppress(OSError):
+                Path(p).unlink()
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -157,8 +176,14 @@ async def health() -> HealthResponse:
     return HealthResponse(status="ok", service="discord-api-morshu", version="1.0.0")
 
 
-@app.get("/tts/phonemes", response_model=PhonemesResponse, dependencies=[Depends(require_auth)])
-async def phonemes(settings: Annotated[Settings, Depends(get_settings)]) -> PhonemesResponse:
+@app.get(
+    "/tts/phonemes",
+    response_model=PhonemesResponse,
+    dependencies=[Depends(require_auth)],
+)
+async def phonemes(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> PhonemesResponse:
     unique = sorted({p for p in morshu_rec["phoneme"].tolist() if p})
     return PhonemesResponse(phonemes=unique, source_wav=settings.tts_source_wav)
 
@@ -187,7 +212,9 @@ async def synthesize(
             headers={"Content-Disposition": 'attachment; filename="morshu.mp4"'},
         )
 
-    wav_bytes = await asyncio.to_thread(_synthesize_blocking, body.text, body.speed, body.trim_silence)
+    wav_bytes = await asyncio.to_thread(
+        _synthesize_blocking, body.text, body.speed, body.trim_silence
+    )
     if not wav_bytes:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

@@ -1,14 +1,14 @@
 # Progress-reporting wrapper around G2p.
 # Core logic borrowed from G2p.__call__() — https://github.com/kyubyong/g2p (Apache-2.0)
-from typing import Callable
+from collections.abc import Callable
 
 from g2p_en.g2p import (  # type: ignore[import-untyped]
     G2p,
     normalize_numbers,
     pos_tag,
     re,
-    unicodedata,
     unicode,
+    unicodedata,
     word_tokenize,
 )
 
