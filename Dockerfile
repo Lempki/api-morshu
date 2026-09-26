@@ -25,4 +25,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 RUN python -c "import nltk; nltk.download('averaged_perceptron_tagger_eng', quiet=True); nltk.download('punkt_tab', quiet=True)"
 USER appuser
 EXPOSE 8000
+# Docker and compose mark the container unhealthy when /health stops answering.
+# Startup loads the G2p model and the source WAV, so the start period is longer than the template's.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
 CMD ["uvicorn", "tts_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
