@@ -1,14 +1,15 @@
 import random
 import warnings
 from collections.abc import Callable
+from typing import Literal
 
 import numpy as np
-from pydub import AudioSegment  # type: ignore[import-untyped]
+from pydub import AudioSegment
 
 from .g2p import G2pProgress
 
 # fmt: off
-morshu_rec = np.rec.array([
+morshu_rec = np.rec.fromrecords([
     ('', 160, 0), ('L', 250, 2), ('AE', 348, 2), ('M', 420, 2), ('P', 510, 1),
     ('OY', 700, 2), ('L', 835, 1), ('', 1090, 0),
     ('R', 1180, 2), ('OW', 1300, 2), ('', 1390, 0), ('P', 1490, 2), ('', 1850, 0),
@@ -78,7 +79,9 @@ class Morshu:
         self.stop_length = 100
         self.use_phoneme_priority = True
         self.out_audio = AudioSegment.empty()
-        self.audio_segment_timings = np.rec.array((0, 0), names=("output", "morshu"))
+        self.audio_segment_timings = np.rec.fromarrays(
+            (0, 0), names=("output", "morshu")
+        )
         self.canceled = False
 
     def cancel(self) -> None:
@@ -90,7 +93,7 @@ class Morshu:
         self,
         text: str | None = None,
         progress_callback: Callable[[int, int, int], None] | None = None,
-    ) -> AudioSegment | bool:
+    ) -> AudioSegment | Literal[False]:
         _ensure_loaded()
         self.canceled = False
 
@@ -151,11 +154,11 @@ class Morshu:
 
         if len(output) == 0:
             warnings.warn("returned audio segment is empty", UserWarning, stacklevel=2)
-            self.audio_segment_timings = np.rec.array(
+            self.audio_segment_timings = np.rec.fromarrays(
                 (0, 0), names=("output", "morshu")
             )
         else:
-            self.audio_segment_timings = np.rec.array(
+            self.audio_segment_timings = np.rec.fromrecords(
                 tuple(zip(audio_out_millis, audio_morshu_millis)),
                 names=("output", "morshu"),
             )
