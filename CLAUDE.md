@@ -18,12 +18,16 @@ The shared conventions live in [discord-dev-standards](https://github.com/Lempki
 ## Layout
 
 * `src/tts_api/main.py` defines the app, the lifespan, and the routes.
-* `src/tts_api/config.py` reads settings from the environment with pydantic-settings.
+* `src/tts_api/config.py` adds this service's settings to `ServiceSettings`.
+* `src/tts_api/service.py` holds `ServiceSettings`, which validates the shared secret, and `service_version()`, which reads the version from pyproject.toml.
+* `src/tts_api/logging_config.py` turns every log record, including uvicorn's, into one JSON line.
 * `src/tts_api/auth.py` holds the bearer token dependency that protects every route except `/health`.
 * `src/tts_api/models.py` holds the request and response models.
 * `src/tts_api/morshutalk/` holds the TTS engine adapted from [MorshuTalk](https://github.com/n0spaces/MorshuTalk), including the phoneme matching logic, the grapheme-to-phoneme wrapper, and the sprite frames used for video synthesis.
 
 ## Template rules
 
-* `src/tts_api/auth.py`, `.dockerignore`, `setup.sh`, `setup.bat`, `.pre-commit-config.yaml`, and `.github/dependabot.yml` are kept identical to discord-api-template.
+* `src/tts_api/auth.py`, `src/tts_api/logging_config.py`, `src/tts_api/service.py`, `.dockerignore`, `setup.sh`, `setup.bat`, `.pre-commit-config.yaml`, and `.github/dependabot.yml` are kept identical to discord-api-template.
 * Run `uv run --project ../discord-dev-standards dev-standards template-check --template ../discord-api-template` to check for drift from those files.
+* Keep the version only in pyproject.toml, and keep `SERVICE` in main.py equal to the project name there.
+* `uv run mypy src` must pass in strict mode, because CI runs it.

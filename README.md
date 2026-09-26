@@ -8,9 +8,11 @@ This is a REST API that synthesizes speech in Morshu's voice and returns the res
 |---|---|---|
 | `POST` | `/tts/synthesize` | Generate audio or video from text. Returns a WAV or MP4 file depending on the `format` field. |
 | `GET` | `/tts/phonemes` | List the phoneme tokens available in the loaded source audio. |
-| `GET` | `/health` | Returns the service name and version. Used for uptime monitoring. |
+| `GET` | `/health` | Returns the service name and the version set in `pyproject.toml`. Uptime monitors and the Docker health check call it. |
 
 All endpoints except `/health` require a bearer token in the `Authorization` header.
+A request without the header or with a wrong token gets `401 Unauthorized` with a `WWW-Authenticate: Bearer` header.
+The token is compared in constant time.
 
 ### POST /tts/synthesize
 
@@ -87,16 +89,26 @@ Alternatively, you can run the API as a Docker container.
 
 After starting with docker-compose, the API is available at `http://localhost:8002`. The container itself listens on port `8000`; docker-compose maps `8002` on the host to `8000` inside the container.
 
+The image has a health check that calls `/health` every 30 seconds.
+Startup loads the grapheme-to-phoneme model, so the check allows 60 seconds before it counts a failure.
+`docker ps` shows the container as `healthy` once the API answers.
+
 ## Configuration
 
 All configuration is read from environment variables or from a `.env` file in the project root.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `DISCORD_API_SECRET` | Yes | — | Shared bearer token. All Discord bots must send this value in the `Authorization` header. |
+| `DISCORD_API_SECRET` | Yes | None | Shared bearer token of at least 16 characters. All Discord bots must send this value in the `Authorization` header. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
 | `TTS_SOURCE_WAV` | No | `/data/morshu.wav` | Absolute path to the source WAV file inside the container. |
-| `LOG_LEVEL` | No | `INFO` | Log verbosity. Accepts standard Python logging levels. |
+| `LOG_LEVEL` | No | `INFO` | Log verbosity. Accepts `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. |
 | `TTS_MAX_TEXT_LENGTH` | No | `500` | Maximum number of characters accepted per synthesis request. |
+
+The service refuses to start when `DISCORD_API_SECRET` is shorter than 16 characters or is a placeholder such as `changeme`.
+The error names the variable but never repeats its value.
+
+Logs are structured JSON.
+Every line is one JSON object, including uvicorn's access log, so log collectors can parse it without guessing.
 
 ## Project structure
 
@@ -106,7 +118,9 @@ discord-api-morshu/
 │   └── morshu.wav      # Source audio file. Required.
 ├── src/tts_api/
 │   ├── main.py         # FastAPI application and route definitions.
-│   ├── config.py       # Environment variable reader.
+│   ├── config.py       # This service's settings on top of the shared ones.
+│   ├── service.py      # Shared settings, secret validation, and the version lookup.
+│   ├── logging_config.py  # JSON log formatter for the app and uvicorn.
 │   ├── auth.py         # Bearer token dependency.
 │   ├── models.py       # Pydantic request and response models.
 │   └── morshutalk/     # TTS engine adapted from MorshuTalk by n0spaces.
