@@ -1,13 +1,20 @@
+import logging
 import os
+import subprocess
+from typing import Literal
 
+import numpy as np
 import pytest
+from fastapi import Response
 from fastapi.testclient import TestClient
+from pydub import AudioSegment
 
 SECRET = "test-secret-0123456789"
 os.environ["DISCORD_API_SECRET"] = SECRET
-os.environ.setdefault("TTS_SOURCE_WAV", "assets/morshu.wav")
 
+from tts_api import main  # noqa: E402
 from tts_api.main import VERSION, app  # noqa: E402
+from tts_api.models import SynthesizeRequest  # noqa: E402
 from tts_api.service import service_version  # noqa: E402
 
 client = TestClient(app)
@@ -89,3 +96,93 @@ def test_synthesize_invalid_format_rejected() -> None:
         "/tts/synthesize", json={"text": "hello", "format": "ogg"}, headers=AUTH
     )
     assert r.status_code == 422
+
+
+def test_phonemes_does_not_expose_the_source_path() -> None:
+    r = client.get("/tts/phonemes", headers=AUTH)
+    assert r.status_code == 200
+    assert set(r.json()) == {"phonemes"}
+    assert "L" in r.json()["phonemes"]
+
+
+@pytest.fixture
+def fake_synthesis(monkeypatch: pytest.MonkeyPatch) -> dict[str, bytes]:
+    files = {"wav": b"RIFF fake wav", "video": b"fake mp4"}
+    monkeypatch.setattr(main, "_synthesize_blocking", lambda *_: files["wav"])
+    monkeypatch.setattr(main, "_synthesize_video_blocking", lambda _: files["video"])
+    return files
+
+
+@pytest.mark.parametrize(
+    ("fmt", "media_type", "filename"),
+    [("wav", "audio/wav", "morshu.wav"), ("video", "video/mp4", "morshu.mp4")],
+)
+def test_synthesize_returns_the_file_with_its_media_type(
+    fake_synthesis: dict[str, bytes], fmt: str, media_type: str, filename: str
+) -> None:
+    r = client.post(
+        "/tts/synthesize", json={"text": "lamp oil", "format": fmt}, headers=AUTH
+    )
+    assert r.status_code == 200
+    assert r.headers["content-type"] == media_type
+    assert r.headers["content-disposition"] == f'attachment; filename="{filename}"'
+    # A plain Response knows its length up front, unlike the StreamingResponse it replaced.
+    assert r.headers["content-length"] == str(len(fake_synthesis[fmt]))
+    assert r.content == fake_synthesis[fmt]
+
+
+@pytest.mark.parametrize("fmt", ["wav", "video"])
+async def test_synthesize_builds_a_plain_response(
+    fake_synthesis: dict[str, bytes], fmt: Literal["wav", "video"]
+) -> None:
+    body = SynthesizeRequest(text="lamp oil", format=fmt)
+    response = await main.synthesize(body, main.get_settings())
+    assert type(response) is Response
+    assert response.body == fake_synthesis[fmt]
+
+
+class _FakeMorshu:
+    """Returns a short silent clip, so the video path reaches ffmpeg without the G2p model."""
+
+    def __init__(self) -> None:
+        self.audio_segment_timings = np.rec.fromrecords(
+            [(0, 0)], names=("output", "morshu")
+        )
+
+    def load_text(self, text: str) -> AudioSegment:
+        return AudioSegment.silent(duration=250)
+
+
+_LONG_STDERR = b"x" * 10_000 + b"final ffmpeg line"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        subprocess.CalledProcessError(1, ["ffmpeg"], output=b"", stderr=_LONG_STDERR),
+        subprocess.TimeoutExpired(["ffmpeg"], 120, output=b"", stderr=_LONG_STDERR),
+    ],
+    ids=["failed", "timed-out"],
+)
+def test_ffmpeg_failure_answers_500_with_a_fixed_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error: subprocess.SubprocessError,
+) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(main, "Morshu", _FakeMorshu)
+    monkeypatch.setattr(subprocess, "run", fail)
+    with caplog.at_level(logging.ERROR, logger=main.logger.name):
+        r = client.post(
+            "/tts/synthesize",
+            json={"text": "lamp oil", "format": "video"},
+            headers=AUTH,
+        )
+    assert r.status_code == 500
+    assert r.json() == {"detail": main.VIDEO_ENCODING_FAILED}
+    [record] = [rec for rec in caplog.records if rec.name == main.logger.name]
+    message = record.getMessage()
+    assert "final ffmpeg line" in message
+    assert len(message) < 2500

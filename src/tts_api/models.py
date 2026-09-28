@@ -12,7 +12,6 @@ class SynthesizeRequest(BaseModel):
 
 class PhonemesResponse(BaseModel):
     phonemes: list[str]
-    source_wav: str
 
 
 class HealthResponse(BaseModel):

@@ -16,6 +16,3 @@ dist/
 *.db-wal
 .claude/settings.local.json
 # <<< dev-standards managed block.
-
-assets/*
-!assets/morshu.wav

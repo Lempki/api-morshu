@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import logging
 import subprocess
 import tempfile
 from collections.abc import AsyncIterator
@@ -9,8 +10,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi import Depends, FastAPI, HTTPException, Response, status
 
 from .auth import require_auth
 from .config import Settings, get_settings
@@ -26,17 +26,31 @@ VERSION = service_version(SERVICE)
 
 # Logging is set up on import, before uvicorn prints its startup lines, so every line is JSON.
 configure_logging(get_settings().log_level)
+logger = logging.getLogger(__name__)
+
+_FFMPEG_TIMEOUT_SECONDS = 120
+# ffmpeg writes a long banner and progress output, so a failure logs only the end of its stderr.
+_FFMPEG_STDERR_LIMIT = 2000
+# The 500 answer never includes ffmpeg's output, because that output can hold server paths.
+VIDEO_ENCODING_FAILED = "Could not encode the video."
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Loads the G2p model and the source WAV before the first request."""
+    """Loads the G2p model and the source WAV before the first request.
+
+    TTS_SOURCE_WAV overrides the source WAV. When it is unset, the packaged morshu.wav is used.
+    """
     settings = get_settings()
     await asyncio.to_thread(init, settings.tts_source_wav)
     yield
 
 
 app = FastAPI(title=SERVICE, version=VERSION, lifespan=lifespan)
+
+
+class VideoEncodingError(Exception):
+    """Raised when ffmpeg fails or runs past its timeout while it encodes a video."""
 
 
 def _synthesize_blocking(text: str, speed: float, trim_silence: bool) -> bytes:
@@ -59,6 +73,54 @@ def _synthesize_blocking(text: str, speed: float, trim_silence: bool) -> bytes:
 
 _SPRITES_DIR = Path(__file__).parent / "morshutalk" / "sprites"
 _MAX_FRAME = 153
+
+
+def _stderr_tail(stderr: bytes | str | None) -> str:
+    """Returns the end of a captured stderr stream as text.
+
+    Args:
+        stderr: The captured stream. Its type depends on how the process was run.
+
+    Returns:
+        At most the last _FFMPEG_STDERR_LIMIT characters of the stream.
+    """
+    if stderr is None:
+        return ""
+    text = (
+        stderr.decode("utf-8", errors="replace")
+        if isinstance(stderr, bytes)
+        else stderr
+    )
+    return text[-_FFMPEG_STDERR_LIMIT:]
+
+
+def _run_ffmpeg(args: list[str]) -> None:
+    """Runs ffmpeg and turns a failure or a timeout into a VideoEncodingError.
+
+    Args:
+        args: The full command line, starting with "ffmpeg".
+
+    Raises:
+        VideoEncodingError: ffmpeg exited with an error or did not finish in time.
+    """
+    try:
+        subprocess.run(
+            args, capture_output=True, check=True, timeout=_FFMPEG_TIMEOUT_SECONDS
+        )
+    except subprocess.CalledProcessError as error:
+        logger.error(
+            "ffmpeg exited with code %d. The end of its stderr follows. %s",
+            error.returncode,
+            _stderr_tail(error.stderr),
+        )
+        raise VideoEncodingError from error
+    except subprocess.TimeoutExpired as error:
+        logger.error(
+            "ffmpeg did not finish within %d seconds. The end of its stderr follows. %s",
+            _FFMPEG_TIMEOUT_SECONDS,
+            _stderr_tail(error.stderr),
+        )
+        raise VideoEncodingError from error
 
 
 def _synthesize_video_blocking(text: str) -> bytes:
@@ -124,7 +186,7 @@ def _synthesize_video_blocking(text: str) -> bytes:
             out_path = f.name
             tmp_files.append(out_path)
 
-        subprocess.run(
+        _run_ffmpeg(
             [
                 "ffmpeg",
                 "-y",
@@ -146,10 +208,7 @@ def _synthesize_video_blocking(text: str) -> bytes:
                 "aac",
                 "-shortest",
                 out_path,
-            ],
-            capture_output=True,
-            check=True,
-            timeout=120,
+            ]
         )
 
         with Path(out_path).open("rb") as f:
@@ -172,33 +231,51 @@ async def health() -> HealthResponse:
     response_model=PhonemesResponse,
     dependencies=[Depends(require_auth)],
 )
-async def phonemes(
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> PhonemesResponse:
+async def phonemes() -> PhonemesResponse:
+    """Lists the phoneme tokens that the source recording contains."""
     unique = sorted({p for p in morshu_rec["phoneme"].tolist() if p})
-    return PhonemesResponse(phonemes=unique, source_wav=settings.tts_source_wav)
+    return PhonemesResponse(phonemes=unique)
 
 
 @app.post("/tts/synthesize", dependencies=[Depends(require_auth)])
 async def synthesize(
     body: SynthesizeRequest,
     settings: Annotated[Settings, Depends(get_settings)],
-) -> StreamingResponse:
+) -> Response:
+    """Synthesizes the text as a WAV file or as a lip-synced MP4 video.
+
+    Args:
+        body: The text and the output options.
+        settings: The service settings, which hold the text length limit.
+
+    Returns:
+        The whole file in one response, with the media type of the requested format.
+
+    Raises:
+        HTTPException: The status is 422 when the text is too long or matches no phonemes.
+            It is 500 when ffmpeg fails to encode the video.
+    """
     if len(body.text) > settings.tts_max_text_length:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Text exceeds maximum length of {settings.tts_max_text_length} characters.",
         )
 
     if body.format == "video":
-        mp4_bytes = await asyncio.to_thread(_synthesize_video_blocking, body.text)
+        try:
+            mp4_bytes = await asyncio.to_thread(_synthesize_video_blocking, body.text)
+        except VideoEncodingError as error:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=VIDEO_ENCODING_FAILED,
+            ) from error
         if not mp4_bytes:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Could not generate video — no phoneme matches found for the given text.",
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Could not generate video. No phoneme matches were found for the text.",
             )
-        return StreamingResponse(
-            io.BytesIO(mp4_bytes),
+        return Response(
+            content=mp4_bytes,
             media_type="video/mp4",
             headers={"Content-Disposition": 'attachment; filename="morshu.mp4"'},
         )
@@ -208,11 +285,11 @@ async def synthesize(
     )
     if not wav_bytes:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Could not generate audio — no phoneme matches found for the given text.",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Could not generate audio. No phoneme matches were found for the text.",
         )
-    return StreamingResponse(
-        io.BytesIO(wav_bytes),
+    return Response(
+        content=wav_bytes,
         media_type="audio/wav",
         headers={"Content-Disposition": 'attachment; filename="morshu.wav"'},
     )

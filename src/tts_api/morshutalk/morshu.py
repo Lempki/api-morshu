@@ -1,8 +1,10 @@
 import random
 import warnings
 from collections.abc import Callable
+from pathlib import Path
 from typing import Literal
 
+import nltk
 import numpy as np
 from pydub import AudioSegment
 
@@ -48,26 +50,62 @@ similar_phonemes: dict[str, list[str]] = {
     "ZH": ["CH"],
 }
 
+# The source recording ships inside the package, so the service needs no mounted volume.
+PACKAGED_WAV = Path(__file__).parent / "morshu.wav"
+
+# Each NLTK package that init needs, mapped to the resource path that nltk.data.find looks up.
+# g2p-en checks for and downloads its own packages when it is imported.
+_NLTK_RESOURCES = {
+    "averaged_perceptron_tagger_eng": "taggers/averaged_perceptron_tagger_eng",
+    "punkt_tab": "tokenizers/punkt_tab",
+}
+
 _g2p: G2pProgress | None = None
 _morshu_wav: AudioSegment | None = None
-_wav_path: str = "/data/morshu.wav"
+_wav_path: Path = PACKAGED_WAV
 
 
-def init(wav_path: str) -> None:
-    """Load the G2p model and source WAV. Call once at application startup."""
+def source_wav_path(wav_path: str | None) -> Path:
+    """Resolves the source recording to load.
+
+    Args:
+        wav_path: A path that overrides the packaged recording, or None to use the packaged one.
+
+    Returns:
+        The path of the WAV file to load.
+    """
+    return PACKAGED_WAV if wav_path is None else Path(wav_path)
+
+
+def _ensure_nltk_data() -> None:
+    """Downloads the NLTK packages that init needs, but only those that are missing.
+
+    The Docker image installs them at build time, so the container never downloads anything.
+    A local run without Docker downloads them once into the default NLTK data directory.
+    """
+    for package, resource in _NLTK_RESOURCES.items():
+        try:
+            nltk.data.find(resource)
+        except LookupError:
+            nltk.download(package, quiet=True)
+
+
+def init(wav_path: str | None = None) -> None:
+    """Loads the G2p model and the source WAV. Call it once at application startup.
+
+    Args:
+        wav_path: A path that overrides the packaged morshu.wav, or None to use the packaged one.
+    """
     global _g2p, _morshu_wav, _wav_path
-    import nltk
-
-    nltk.download("averaged_perceptron_tagger_eng", quiet=True)
-    nltk.download("punkt_tab", quiet=True)
-    _wav_path = wav_path
+    _ensure_nltk_data()
+    _wav_path = source_wav_path(wav_path)
     _g2p = G2pProgress()
-    _morshu_wav = AudioSegment.from_wav(wav_path)
+    _morshu_wav = AudioSegment.from_wav(_wav_path)
 
 
 def _ensure_loaded() -> None:
     if _g2p is None or _morshu_wav is None:
-        init(_wav_path)
+        init(str(_wav_path))
 
 
 class Morshu:
