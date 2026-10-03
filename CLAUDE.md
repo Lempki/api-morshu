@@ -11,7 +11,7 @@ The shared conventions live in [discord-dev-standards](https://github.com/Lempki
 
 * `uv sync` installs the package and its locked dependencies into `.venv`.
 * `uv run uvicorn tts_api.main:app --reload` starts the API. It reads its settings from `.env`.
-* `docker-compose up --build` builds and runs the service. It listens on host port 8002.
+* `docker compose up --build` builds and runs the service. It listens on host port 8002.
 * `uv run pytest` runs the tests.
 * `uvx pre-commit run --all-files` runs every lint and format hook.
 
@@ -35,7 +35,7 @@ The shared conventions live in [discord-dev-standards](https://github.com/Lempki
 
 ## Template rules
 
-* `src/tts_api/auth.py`, `src/tts_api/logging_config.py`, `src/tts_api/service.py`, `.dockerignore`, `setup.sh`, `setup.bat`, `.pre-commit-config.yaml`, and `.github/dependabot.yml` are kept identical to discord-api-template.
+* `src/tts_api/auth.py`, `src/tts_api/logging_config.py`, `src/tts_api/service.py`, `tests/test_shared.py`, `.dockerignore`, `setup.sh`, `setup.bat`, `.pre-commit-config.yaml`, and `.github/dependabot.yml` are kept identical to discord-api-template.
 * Run `uv run --project ../discord-dev-standards dev-standards template-check --template ../discord-api-template` to check for drift from those files.
 * Keep the version only in pyproject.toml, and keep `SERVICE` in main.py equal to the project name there.
 * `uv run mypy src` must pass in strict mode, because CI runs it.

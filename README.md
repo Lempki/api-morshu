@@ -90,10 +90,10 @@ Alternatively, you can run the API as a Docker container.
 2. Build and start the container:
 
    ```
-   docker-compose up --build
+   docker compose up --build
    ```
 
-After starting with docker-compose, the API is available at `http://localhost:8002`. The container itself listens on port `8000`; docker-compose maps `8002` on the host to `8000` inside the container.
+After starting with Docker Compose, the API is available at `http://localhost:8002`. The container itself listens on port `8000`, and Docker Compose maps host port `8002` to it. The service keeps no state between requests, so the container needs no volume.
 
 The image has a health check that calls `/health` every 30 seconds.
 Startup loads the grapheme-to-phoneme model, so the check allows 60 seconds before it counts a failure.
@@ -136,7 +136,7 @@ discord-api-morshu/
 │       ├── morshu.py   # Core phoneme matching and audio stitching logic.
 │       ├── g2p.py      # Grapheme-to-phoneme conversion wrapper.
 │       ├── morshu.wav  # Source recording that every clip is cut from.
-│       └── sprites/    # 154 sprite frames for video synthesis (0.png–153.png).
+│       └── sprites/    # 154 sprite frames for video synthesis (0.png to 153.png).
 ├── tests/
 ├── Dockerfile
 ├── docker-compose.yml
