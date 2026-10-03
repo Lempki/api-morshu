@@ -1,0 +1,35 @@
+# Every word that morshu.wav says, in order, with where it starts and ends in milliseconds.
+# The times are boundaries of the phoneme table in morshu.py, and a test keeps the two in step.
+# Change this file together with morshu.wav and that table.
+lamp	160	510
+oil	510	835
+rope	1090	1490
+bombs	1850	2390
+you	2780	2960
+want	2960	3150
+it	3150	3370
+it's	3810	4070
+yours	4070	4600
+my	4600	4810
+friend	4885	5300
+as	5520	5740
+long	5740	6140
+as	6140	6265
+you	6265	6380
+have	6380	6580
+enough	6580	6855
+rubies	6855	7520
+sorry	8236	8630
+link	8630	9014
+i	9251	9384
+can't	9467	9716
+give	9844	10060
+credit	10149	10617
+come	10962	11229
+back	11229	11511
+when	11511	11705
+you're	11705	11864
+a	11864	11959
+little	11959	12386
+mmm	12596	13196
+richer	13426	13991
