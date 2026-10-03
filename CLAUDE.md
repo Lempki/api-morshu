@@ -5,7 +5,8 @@ It converts text to a WAV file, or to a lip-synced MP4 video, using numpy, the C
 The source recording `morshu.wav` ships inside the package, and `TTS_SOURCE_WAV` can point to a replacement.
 Bots and other clients call this API so they do not need to bundle the TTS engine or its dependencies locally.
 This project is based on [api-template](https://github.com/Lempki/api-template).
-The shared conventions live in [discord-dev-standards](https://github.com/Lempki/discord-dev-standards), and its README is the rulebook for code, prose, and commits.
+The shared conventions live in [dev-standards](https://github.com/Lempki/dev-standards), and its README is the rulebook for code, prose, commits, and engineering guidelines.
+Read it before changing code. When the repositories are cloned side by side, the local copy is `../dev-standards/README.md`.
 
 ## Commands
 
@@ -41,6 +42,6 @@ The shared conventions live in [discord-dev-standards](https://github.com/Lempki
 ## Template rules
 
 * `src/tts_api/auth.py`, `src/tts_api/logging_config.py`, `src/tts_api/service.py`, `tests/test_shared.py`, `.dockerignore`, `setup.sh`, `setup.bat`, `.pre-commit-config.yaml`, and `.github/dependabot.yml` are kept identical to api-template.
-* Run `uv run --project ../discord-dev-standards dev-standards template-check --template ../api-template` to check for drift from those files.
+* Run `uv run --project ../dev-standards dev-standards template-check --template ../api-template` to check for drift from those files.
 * Keep the version only in pyproject.toml, and keep `SERVICE` in main.py equal to the project name there.
 * `uv run mypy src` must pass in strict mode, because CI runs it.
