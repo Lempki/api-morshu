@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 SECRET = "test-secret-0123456789"
-os.environ["DISCORD_API_SECRET"] = SECRET
+os.environ["API_SECRET"] = SECRET
 
 import tts_api.morshutalk.morshu as morshu_module  # noqa: E402
 from tts_api import main  # noqa: E402

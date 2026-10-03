@@ -1,6 +1,6 @@
-# discord-api-morshu
+# api-morshu
 
-This is a REST API that synthesizes speech in Morshu's voice and returns the result as an audio or video file. It hosts the TTS engine adapted from [MorshuTalk](https://github.com/n0spaces/MorshuTalk) by [n0spaces](https://github.com/n0spaces), converting arbitrary text into audio by stitching phoneme segments from Morshu's original Zelda CD-i dialogue. Discord bots call this API to generate and play Morshu audio without bundling the TTS engine or its dependencies locally. This project is based on the [discord-api-template](https://github.com/Lempki/discord-api-template) repository, which provides the core architecture.
+This is a REST API that synthesizes speech in Morshu's voice and returns the result as an audio or video file. It hosts the TTS engine adapted from [MorshuTalk](https://github.com/n0spaces/MorshuTalk) by [n0spaces](https://github.com/n0spaces), converting arbitrary text into audio by stitching phoneme segments from Morshu's original Zelda CD-i dialogue. Clients such as Discord bots call this API to generate and play Morshu audio without bundling the TTS engine or its dependencies locally. This project is based on the [api-template](https://github.com/Lempki/api-template) repository, which provides the core architecture.
 
 ## Endpoints
 
@@ -92,14 +92,14 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-The script runs `uv sync`, which creates the `.venv` virtual environment if needed and installs the package with its locked dependencies. It copies `.env.template` to `.env` on the first run. You must edit `.env` and set `DISCORD_API_SECRET` before starting the API.
+The script runs `uv sync`, which creates the `.venv` virtual environment if needed and installs the package with its locked dependencies. It copies `.env.template` to `.env` on the first run. You must edit `.env` and set `API_SECRET` before starting the API.
 
 If you prefer to perform the setup manually, follow these steps:
 
 ```bash
 uv sync
 cp .env.template .env
-# Edit .env and set DISCORD_API_SECRET and other values as needed.
+# Edit .env and set API_SECRET and other values as needed.
 uv run uvicorn tts_api.main:app --port 8002
 ```
 
@@ -107,7 +107,7 @@ uv run uvicorn tts_api.main:app --port 8002
 
 Alternatively, you can run the API as a Docker container.
 
-1. Copy `.env.template` to `.env` and set `DISCORD_API_SECRET`.
+1. Copy `.env.template` to `.env` and set `API_SECRET`.
 2. Build and start the container:
 
    ```
@@ -128,12 +128,12 @@ All configuration is read from environment variables or from a `.env` file in th
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `DISCORD_API_SECRET` | Yes | None | Shared bearer token of at least 16 characters. All Discord bots must send this value in the `Authorization` header. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
+| `API_SECRET` | Yes | None | Shared bearer token of at least 16 characters. Every client must send this value in the `Authorization` header. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
 | `TTS_SOURCE_WAV` | No | None | Path to a replacement for the source WAV file, which must be 16-bit PCM in mono or stereo. When it is unset or empty, the service uses the `morshu.wav` that ships in the package. |
 | `LOG_LEVEL` | No | `INFO` | Log verbosity. Accepts `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. |
 | `TTS_MAX_TEXT_LENGTH` | No | `500` | Maximum number of characters accepted per synthesis request. |
 
-The service refuses to start when `DISCORD_API_SECRET` is shorter than 16 characters or is a placeholder such as `changeme`.
+The service refuses to start when `API_SECRET` is shorter than 16 characters or is a placeholder such as `changeme`.
 The error names the variable but never repeats its value.
 
 Logs are structured JSON.
@@ -142,7 +142,7 @@ Every line is one JSON object, including uvicorn's access log, so log collectors
 ## Project structure
 
 ```
-discord-api-morshu/
+api-morshu/
 ├── src/tts_api/
 │   ├── main.py         # FastAPI application and route definitions.
 │   ├── config.py       # This service's settings on top of the shared ones.

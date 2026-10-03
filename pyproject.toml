@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "discord-api-morshu"
+name = "api-morshu"
 version = "1.0.0"
 license = "MIT"
 license-files = ["LICENSE"]

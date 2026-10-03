@@ -9,7 +9,7 @@ from fastapi import Response
 from fastapi.testclient import TestClient
 
 SECRET = "test-secret-0123456789"
-os.environ["DISCORD_API_SECRET"] = SECRET
+os.environ["API_SECRET"] = SECRET
 
 from tts_api import main  # noqa: E402
 from tts_api.main import VERSION, app  # noqa: E402
@@ -27,13 +27,13 @@ def test_health_needs_no_token() -> None:
     assert r.status_code == 200
     assert r.json() == {
         "status": "ok",
-        "service": "discord-api-morshu",
+        "service": "api-morshu",
         "version": VERSION,
     }
 
 
 def test_version_comes_from_package_metadata() -> None:
-    assert VERSION == service_version("discord-api-morshu") != "0.0.0"
+    assert VERSION == service_version("api-morshu") != "0.0.0"
     assert service_version("not-an-installed-project") == "0.0.0"
 
 

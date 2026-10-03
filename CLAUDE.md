@@ -1,10 +1,10 @@
-# discord-api-morshu
+# api-morshu
 
 A FastAPI service that synthesizes Morshu's voice as speech.
 It converts text to a WAV file, or to a lip-synced MP4 video, using numpy, the CMU Pronouncing Dictionary, and FFmpeg.
 The source recording `morshu.wav` ships inside the package, and `TTS_SOURCE_WAV` can point to a replacement.
-Discord bots call this API so they do not need to bundle the TTS engine or its dependencies locally.
-This project is based on [discord-api-template](https://github.com/Lempki/discord-api-template).
+Bots and other clients call this API so they do not need to bundle the TTS engine or its dependencies locally.
+This project is based on [api-template](https://github.com/Lempki/api-template).
 The shared conventions live in [discord-dev-standards](https://github.com/Lempki/discord-dev-standards), and its README is the rulebook for code, prose, and commits.
 
 ## Commands
@@ -40,7 +40,7 @@ The shared conventions live in [discord-dev-standards](https://github.com/Lempki
 
 ## Template rules
 
-* `src/tts_api/auth.py`, `src/tts_api/logging_config.py`, `src/tts_api/service.py`, `tests/test_shared.py`, `.dockerignore`, `setup.sh`, `setup.bat`, `.pre-commit-config.yaml`, and `.github/dependabot.yml` are kept identical to discord-api-template.
-* Run `uv run --project ../discord-dev-standards dev-standards template-check --template ../discord-api-template` to check for drift from those files.
+* `src/tts_api/auth.py`, `src/tts_api/logging_config.py`, `src/tts_api/service.py`, `tests/test_shared.py`, `.dockerignore`, `setup.sh`, `setup.bat`, `.pre-commit-config.yaml`, and `.github/dependabot.yml` are kept identical to api-template.
+* Run `uv run --project ../discord-dev-standards dev-standards template-check --template ../api-template` to check for drift from those files.
 * Keep the version only in pyproject.toml, and keep `SERVICE` in main.py equal to the project name there.
 * `uv run mypy src` must pass in strict mode, because CI runs it.

@@ -21,7 +21,7 @@ from .morshutalk.morshu import morshu_rec
 from .service import service_version
 
 # The service name is also the project name in pyproject.toml, which the version is read from.
-SERVICE = "discord-api-morshu"
+SERVICE = "api-morshu"
 VERSION = service_version(SERVICE)
 
 # Logging is set up on import, before uvicorn prints its startup lines, so every line is JSON.
