@@ -1,7 +1,7 @@
 # discord-api-morshu
 
 A FastAPI service that synthesizes Morshu's voice as speech.
-It converts text to a WAV file, or to a lip-synced MP4 video, using g2p-en, pydub, numpy, and FFmpeg.
+It converts text to a WAV file, or to a lip-synced MP4 video, using numpy, the CMU Pronouncing Dictionary, and FFmpeg.
 The source recording `morshu.wav` ships inside the package, and `TTS_SOURCE_WAV` can point to a replacement.
 Discord bots call this API so they do not need to bundle the TTS engine or its dependencies locally.
 This project is based on [discord-api-template](https://github.com/Lempki/discord-api-template).
@@ -27,8 +27,13 @@ The shared conventions live in [discord-dev-standards](https://github.com/Lempki
 
 ## Runtime notes
 
-* The Dockerfile downloads every NLTK package that g2p-en and `init` need at build time, into `/usr/local/share/nltk_data`.
-* `init` downloads an NLTK package only when `nltk.data.find` cannot find it, so the container never downloads and local runs still work.
+* `morshutalk/audio.py` replaces pydub, and `morshutalk/g2p.py` carries g2p-en's model without NLTK. Do not add pydub, g2p-en, or NLTK back.
+* `audio.py` cuts at `int(ms * (rate / 1000.0))`, exactly as pydub did, so every clip starts on the same sample as before.
+* The engine reads only files inside the package, so it never downloads anything.
+* `morshutalk/phrases.py` plays word runs that morshu.wav says verbatim as recorded, using `morshu_words.tsv`. A run needs `MIN_WORDS` words and `MIN_CHARS` characters.
+* Change `morshu_words.tsv`, the phoneme table in `morshu.py`, and `morshu.wav` together. `tests/test_phrases.py` checks that they line up.
+* Text without a recorded run goes through the phoneme engine exactly as it did before phrase matching.
+* Every file in `g2p_data/` stays under 1 MB, the pre-commit limit. The model is therefore one `.npy` file per weight matrix.
 * `morshu.wav` is package data. Hatchling puts it in the wheel, so the image needs no volume.
 * `/tts/synthesize` answers with a plain `Response`. A failed or timed-out ffmpeg run becomes a 500 with a fixed detail, and its stderr goes only to the log.
 * `/tts/phonemes` returns only the phoneme list, never a server path.

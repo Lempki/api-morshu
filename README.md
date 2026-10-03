@@ -21,11 +21,12 @@ The token is compared in constant time.
   "text": "lamp oil, rope, bombs?",
   "speed": 1.0,
   "trim_silence": false,
-  "format": "wav"
+  "format": "wav",
+  "phrase_matching": true
 }
 ```
 
-`speed` accepts values between `0.5` and `2.0`. `trim_silence` removes leading and trailing silence from the output. `format` accepts `"wav"` (default) or `"video"`.
+`speed` accepts values between `0.5` and `2.0`. `trim_silence` removes leading and trailing silence from the output. `format` accepts `"wav"` (default) or `"video"`. `phrase_matching` is on by default and is described below.
 
 When `format` is `"wav"`, returns a binary WAV file with `Content-Type: audio/wav`. When `format` is `"video"`, generates an MP4 by compositing MorshuTalk sprite frames at 10 fps in sync with the synthesised audio and returns the file with `Content-Type: video/mp4`. The `speed` and `trim_silence` fields are ignored for video output. If the text exceeds the configured maximum length or no phoneme matches are found, a `422` response is returned.
 
@@ -33,6 +34,26 @@ The whole file arrives in one response with a `Content-Length` header.
 If FFmpeg fails or runs for more than 120 seconds, the video request gets a `500` answer.
 Its body is always `{"detail": "Could not encode the video."}`.
 The service logs the end of FFmpeg's error output, but the response never includes it.
+
+#### Phrase matching
+
+The phoneme engine builds speech from short clips, so even Morshu's own lines come out choppy when it speaks them.
+With `phrase_matching` on, any run of words that morshu.wav says in the same order plays exactly as recorded.
+A run needs at least 2 words and 8 characters, so single words and short pairs still go to the phoneme engine.
+The search is greedy from left to right and ignores case, accents, apostrophes, and punctuation.
+A hum of two or more m's matches the recording's "mmm".
+The engine speaks everything else, and the pieces are joined with the engine's usual pauses.
+
+| Text | Result |
+|---|---|
+| `Lamp oil, rope, bombs, you want it?` | One recorded clip. |
+| `Welcome to my shop, my friend!` | The engine says "Welcome to my shop", and "my friend" plays as recorded. The first "my" is a single word, so the engine says it. |
+| `Rope, bombs, lamp oil.` | Two recorded clips, "Rope, bombs" and "lamp oil". |
+| `As long as you want.` | "As long as you" plays as recorded, and the engine says "want". |
+
+The video follows the same pieces, so recorded runs also get Morshu's original mouth movements.
+The word-level transcript of the recording is `morshutalk/morshu_words.tsv`.
+A test checks that every word in it lines up with the phoneme table in `morshu.py`.
 
 ### GET /tts/phonemes
 
@@ -96,13 +117,10 @@ Alternatively, you can run the API as a Docker container.
 After starting with Docker Compose, the API is available at `http://localhost:8002`. The container itself listens on port `8000`, and Docker Compose maps host port `8002` to it. The service keeps no state between requests, so the container needs no volume.
 
 The image has a health check that calls `/health` every 30 seconds.
-Startup loads the grapheme-to-phoneme model, so the check allows 60 seconds before it counts a failure.
+Startup loads the pronunciation dictionary and the grapheme-to-phoneme model, so the check allows 60 seconds before it counts a failure.
 `docker ps` shows the container as `healthy` once the API answers.
 
-The image downloads the NLTK data that g2p-en and the engine need at build time.
-It lives in `/usr/local/share/nltk_data`, which the `NLTK_DATA` variable points to.
-A container start downloads nothing and needs no network access.
-Without Docker, the first start downloads any missing NLTK data into the default NLTK data directory.
+Every file the engine reads ships inside the package, so the service never downloads anything and needs no network access.
 
 ## Configuration
 
@@ -111,7 +129,7 @@ All configuration is read from environment variables or from a `.env` file in th
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DISCORD_API_SECRET` | Yes | None | Shared bearer token of at least 16 characters. All Discord bots must send this value in the `Authorization` header. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
-| `TTS_SOURCE_WAV` | No | None | Path to a replacement for the source WAV file. When it is unset or empty, the service uses the `morshu.wav` that ships in the package. |
+| `TTS_SOURCE_WAV` | No | None | Path to a replacement for the source WAV file, which must be 16-bit PCM in mono or stereo. When it is unset or empty, the service uses the `morshu.wav` that ships in the package. |
 | `LOG_LEVEL` | No | `INFO` | Log verbosity. Accepts `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL`. |
 | `TTS_MAX_TEXT_LENGTH` | No | `500` | Maximum number of characters accepted per synthesis request. |
 
@@ -134,7 +152,12 @@ discord-api-morshu/
 │   ├── models.py       # Pydantic request and response models.
 │   └── morshutalk/     # TTS engine adapted from MorshuTalk by n0spaces.
 │       ├── morshu.py   # Core phoneme matching and audio stitching logic.
-│       ├── g2p.py      # Grapheme-to-phoneme conversion wrapper.
+│       ├── phrases.py  # Finds word runs that the recording says verbatim.
+│       ├── morshu_words.tsv  # Every word of morshu.wav with its start and end time.
+│       ├── audio.py    # Mono 16-bit audio clips on numpy and the wave module.
+│       ├── g2p.py      # Text to phonemes with the CMU dictionary and a small neural model.
+│       ├── numbers.py  # Spells out numbers, money, and ordinals before g2p.
+│       ├── g2p_data/   # The CMU dictionary, the model's weights, and their licenses.
 │       ├── morshu.wav  # Source recording that every clip is cut from.
 │       └── sprites/    # 154 sprite frames for video synthesis (0.png to 153.png).
 ├── tests/
@@ -157,18 +180,21 @@ uv run pytest
 Run every lint and format check with `uvx pre-commit run --all-files`, or install the hooks once with `uvx pre-commit install` so they run on each commit.
 The coding, prose, and commit conventions are documented in [discord-dev-standards](https://github.com/Lempki/discord-dev-standards).
 
-## Known risks
+## Dependencies
 
-The grapheme-to-phoneme step depends on g2p-en, which is unmaintained.
-Its last release, 2.1.0, was uploaded to PyPI on 2019-12-31.
-It still expects the NLTK behavior of that time.
-For example, it checks for NLTK's old `averaged_perceptron_tagger` package.
-NLTK 3.9 and later tag with `averaged_perceptron_tagger_eng` instead, so the image carries both.
-If a future NLTK release breaks g2p-en, the service fails at startup or on every synthesis request.
-Pinning NLTK to the last working version would be the quick fix.
-The lasting fix is to vendor g2p-en's Apache-2.0 code and model into `morshutalk`, as `g2p.py` already does in part.
-Its pronunciations would then come from the maintained `cmudict` package.
+The engine runs on numpy, `inflect` for spelling out numbers, and FFmpeg for video.
+It does not use pydub, g2p-en, or NLTK.
+pydub and g2p-en are unmaintained, and pydub needs the `audioop` module that Python 3.13 removed.
+`audio.py` replaces pydub with numpy and the standard library's `wave` module.
+`g2p.py` carries g2p-en's model and code, without its NLTK parts.
+Pronunciations come from the CMU Pronouncing Dictionary that ships in `g2p_data/`.
+A word with several pronunciations takes the dictionary's first one.
+g2p-en guessed the part of speech for a short list of such words instead, so "the refuse" and "to refuse" now sound the same.
 
 ## Credits
 
 The TTS engine in `src/tts_api/morshutalk/` is adapted from [MorshuTalk](https://github.com/n0spaces/MorshuTalk) by [n0spaces](https://github.com/n0spaces), released under the [MIT License](https://github.com/n0spaces/MorshuTalk/blob/main/LICENSE.txt).
+
+The grapheme-to-phoneme model and code in `g2p.py` and `numbers.py` are adapted from [g2p-en](https://github.com/Kyubyong/g2p) by Kyubyong Park and Jongseok Kim, released under the Apache License 2.0. Its license text is in `g2p_data/model/LICENSE`.
+
+The [CMU Pronouncing Dictionary](https://github.com/cmusphinx/cmudict) is copyright Carnegie Mellon University and ships under its BSD-style license in `g2p_data/cmudict.LICENSE`. The copy in `g2p_data/cmudict.dict.gz` comes from commit `74790861` of that repository.
