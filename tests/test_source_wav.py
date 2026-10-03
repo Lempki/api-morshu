@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from pydub import AudioSegment
 
 SECRET = "test-secret-0123456789"
 os.environ["DISCORD_API_SECRET"] = SECRET
@@ -14,10 +13,11 @@ os.environ["DISCORD_API_SECRET"] = SECRET
 import tts_api.morshutalk.morshu as morshu_module  # noqa: E402
 from tts_api import main  # noqa: E402
 from tts_api.config import Settings  # noqa: E402
+from tts_api.morshutalk.audio import Clip  # noqa: E402
 
 
 class _StubG2p:
-    """Stands in for G2pProgress, so init runs without the NLTK data or the model."""
+    """Stands in for G2p, so init runs without loading the dictionary or the model."""
 
 
 @pytest.fixture
@@ -25,8 +25,7 @@ def stub_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     # Setting the globals to their current values makes monkeypatch restore them afterwards.
     for name in ("_g2p", "_morshu_wav", "_wav_path"):
         monkeypatch.setattr(morshu_module, name, getattr(morshu_module, name))
-    monkeypatch.setattr(morshu_module, "G2pProgress", _StubG2p)
-    monkeypatch.setattr(morshu_module, "_ensure_nltk_data", lambda: None)
+    monkeypatch.setattr(morshu_module, "G2p", _StubG2p)
 
 
 def _settings() -> Settings:
@@ -37,7 +36,7 @@ def _settings() -> Settings:
 def test_packaged_wav_ships_inside_the_package() -> None:
     assert morshu_module.PACKAGED_WAV.name == "morshu.wav"
     assert morshu_module.PACKAGED_WAV.parent == Path(morshu_module.__file__).parent
-    assert len(AudioSegment.from_wav(morshu_module.PACKAGED_WAV)) > 0
+    assert len(Clip.from_wav(morshu_module.PACKAGED_WAV)) > 0
 
 
 @pytest.mark.parametrize("value", [None, "", "  "], ids=["unset", "empty", "blank"])

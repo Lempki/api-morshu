@@ -1,7 +1,6 @@
 """The FastAPI application, its lifespan, and its routes."""
 
 import asyncio
-import io
 import logging
 import subprocess
 import tempfile
@@ -11,14 +10,13 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Response, status
-from pydub import AudioSegment
-from pydub.silence import detect_leading_silence
 
 from .auth import require_auth
 from .config import Settings, get_settings
 from .logging_config import configure_logging
 from .models import HealthResponse, PhonemesResponse, SynthesizeRequest
 from .morshutalk import Morshu, init
+from .morshutalk.audio import Clip, detect_leading_silence
 from .morshutalk.morshu import morshu_rec
 from .service import service_version
 
@@ -56,11 +54,11 @@ class VideoEncodingError(Exception):
 
 
 # Silence is measured against the clip's own loudness, because recordings differ in level.
-# A fixed threshold such as pydub's default of -16 dBFS treats quiet speech as silence.
+# A fixed threshold, such as the -16 dBFS that pydub used, treats quiet speech as silence.
 _SILENCE_BELOW_AVERAGE_DB = 20.0
 
 
-def trim_edges(audio: AudioSegment) -> AudioSegment:
+def trim_edges(audio: Clip) -> Clip:
     """Removes the silence before the first sound and after the last one.
 
     Silence in the middle of the clip stays, so the pauses between words are kept.
@@ -71,9 +69,9 @@ def trim_edges(audio: AudioSegment) -> AudioSegment:
     Returns:
         The clip without leading and trailing silence, or the clip unchanged when it is all silence.
     """
-    if audio.dBFS == float("-inf"):
+    if audio.dbfs == float("-inf"):
         return audio
-    threshold = audio.dBFS - _SILENCE_BELOW_AVERAGE_DB
+    threshold = audio.dbfs - _SILENCE_BELOW_AVERAGE_DB
     start = detect_leading_silence(audio, silence_threshold=threshold)
     end = len(audio) - detect_leading_silence(
         audio.reverse(), silence_threshold=threshold
@@ -81,22 +79,19 @@ def trim_edges(audio: AudioSegment) -> AudioSegment:
     return audio[start:end] if start < end else audio
 
 
-def _synthesize_blocking(text: str, speed: float, trim_silence: bool) -> bytes:
-    m = Morshu()
+def _synthesize_blocking(
+    text: str, speed: float, trim_silence: bool, phrase_matching: bool = True
+) -> bytes:
+    m = Morshu(phrase_matching=phrase_matching)
     result = m.load_text(text)
     if result is False or len(result) == 0:
         return b""
     audio = result
     if speed != 1.0:
-        audio = audio._spawn(
-            audio.raw_data, overrides={"frame_rate": int(audio.frame_rate * speed)}
-        )
-        audio = audio.set_frame_rate(result.frame_rate)
+        audio = audio.change_speed(speed)
     if trim_silence:
         audio = trim_edges(audio)
-    buf = io.BytesIO()
-    audio.export(buf, format="wav")
-    return buf.getvalue()
+    return audio.to_wav()
 
 
 _SPRITES_DIR = Path(__file__).parent / "morshutalk" / "sprites"
@@ -151,8 +146,8 @@ def _run_ffmpeg(args: list[str]) -> None:
         raise VideoEncodingError from error
 
 
-def _synthesize_video_blocking(text: str) -> bytes:
-    m = Morshu()
+def _synthesize_video_blocking(text: str, phrase_matching: bool = True) -> bytes:
+    m = Morshu(phrase_matching=phrase_matching)
     result = m.load_text(text)
     if result is False or len(result) == 0:
         return b""
@@ -185,9 +180,7 @@ def _synthesize_video_blocking(text: str) -> bytes:
     if not frame_entries:
         return b""
 
-    wav_buf = io.BytesIO()
-    audio.export(wav_buf, format="wav")
-    wav_bytes = wav_buf.getvalue()
+    wav_bytes = audio.to_wav()
 
     tmp_files: list[str] = []
     try:
@@ -291,7 +284,9 @@ async def synthesize(
 
     if body.format == "video":
         try:
-            mp4_bytes = await asyncio.to_thread(_synthesize_video_blocking, body.text)
+            mp4_bytes = await asyncio.to_thread(
+                _synthesize_video_blocking, body.text, body.phrase_matching
+            )
         except VideoEncodingError as error:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -309,7 +304,11 @@ async def synthesize(
         )
 
     wav_bytes = await asyncio.to_thread(
-        _synthesize_blocking, body.text, body.speed, body.trim_silence
+        _synthesize_blocking,
+        body.text,
+        body.speed,
+        body.trim_silence,
+        body.phrase_matching,
     )
     if not wav_bytes:
         raise HTTPException(

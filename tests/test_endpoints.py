@@ -7,7 +7,6 @@ import numpy as np
 import pytest
 from fastapi import Response
 from fastapi.testclient import TestClient
-from pydub import AudioSegment
 
 SECRET = "test-secret-0123456789"
 os.environ["DISCORD_API_SECRET"] = SECRET
@@ -15,6 +14,7 @@ os.environ["DISCORD_API_SECRET"] = SECRET
 from tts_api import main  # noqa: E402
 from tts_api.main import VERSION, app  # noqa: E402
 from tts_api.models import SynthesizeRequest  # noqa: E402
+from tts_api.morshutalk.audio import Clip  # noqa: E402
 from tts_api.service import service_version  # noqa: E402
 
 client = TestClient(app)
@@ -109,7 +109,7 @@ def test_phonemes_does_not_expose_the_source_path() -> None:
 def fake_synthesis(monkeypatch: pytest.MonkeyPatch) -> dict[str, bytes]:
     files = {"wav": b"RIFF fake wav", "video": b"fake mp4"}
     monkeypatch.setattr(main, "_synthesize_blocking", lambda *_: files["wav"])
-    monkeypatch.setattr(main, "_synthesize_video_blocking", lambda _: files["video"])
+    monkeypatch.setattr(main, "_synthesize_video_blocking", lambda *_: files["video"])
     return files
 
 
@@ -141,16 +141,20 @@ async def test_synthesize_builds_a_plain_response(
     assert response.body == fake_synthesis[fmt]
 
 
+# The frame rate of morshu.wav.
+RATE = 18900
+
+
 class _FakeMorshu:
     """Returns a short silent clip, so the video path reaches ffmpeg without the G2p model."""
 
-    def __init__(self) -> None:
+    def __init__(self, phrase_matching: bool = True) -> None:
         self.audio_segment_timings = np.rec.fromrecords(
             [(0, 0)], names=("output", "morshu")
         )
 
-    def load_text(self, text: str) -> AudioSegment:
-        return AudioSegment.silent(duration=250)
+    def load_text(self, text: str) -> Clip:
+        return Clip.silent(250, RATE)
 
 
 _LONG_STDERR = b"x" * 10_000 + b"final ffmpeg line"
@@ -188,18 +192,24 @@ def test_ffmpeg_failure_answers_500_with_a_fixed_detail(
     assert len(message) < 2500
 
 
-def _quiet_speech_with_padding() -> AudioSegment:
-    """Two quiet tones with a pause between them and silence around them."""
-    from pydub.generators import Sine
+def _tone(duration_ms: int, dbfs: float) -> Clip:
+    """A 440 Hz sine tone whose peak sits at the given level."""
+    t = np.arange(int(duration_ms * RATE / 1000)) / RATE
+    amplitude = 32767 * 10 ** (dbfs / 20)
+    return Clip(
+        np.round(amplitude * np.sin(2 * np.pi * 440 * t)).astype(np.int16), RATE
+    )
 
-    tone = Sine(440).to_audio_segment(duration=1500, volume=-24.0)
-    pause = AudioSegment.silent(duration=300)
+
+def _quiet_speech_with_padding() -> Clip:
+    """Two quiet tones with a pause between them and silence around them."""
+    tone = _tone(1500, -24.0)
     return (
-        AudioSegment.silent(duration=500)
+        Clip.silent(500, RATE)
         + tone
-        + pause
+        + Clip.silent(300, RATE)
         + tone
-        + AudioSegment.silent(duration=500)
+        + Clip.silent(500, RATE)
     )
 
 
@@ -217,6 +227,30 @@ def test_trim_edges_keeps_quiet_speech_and_inner_pauses() -> None:
 def test_trim_edges_leaves_an_all_silent_clip_unchanged() -> None:
     from tts_api.main import trim_edges
 
-    silence = AudioSegment.silent(duration=800)
+    silence = Clip.silent(800, RATE)
 
     assert len(trim_edges(silence)) == 800
+
+
+@pytest.mark.parametrize("fmt", ["wav", "video"])
+@pytest.mark.parametrize("phrase_matching", [True, False])
+def test_synthesize_passes_phrase_matching_on(
+    monkeypatch: pytest.MonkeyPatch, fmt: str, phrase_matching: bool
+) -> None:
+    received: list[bool] = []
+
+    def fake(*args: object) -> bytes:
+        received.append(bool(args[-1]))
+        return b"data"
+
+    monkeypatch.setattr(main, "_synthesize_blocking", fake)
+    monkeypatch.setattr(main, "_synthesize_video_blocking", fake)
+    body = {"text": "sorry link", "format": fmt, "phrase_matching": phrase_matching}
+    assert client.post("/tts/synthesize", json=body, headers=AUTH).status_code == 200
+    assert received == [phrase_matching]
+
+
+def test_phrase_matching_is_on_by_default() -> None:
+    from tts_api.models import SynthesizeRequest
+
+    assert SynthesizeRequest(text="x").phrase_matching is True

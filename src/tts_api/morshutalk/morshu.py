@@ -5,16 +5,17 @@ It then stitches clips of the same phonemes, cut from morshu.wav, into new speec
 """
 
 import random
+import re
 import warnings
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
-import nltk
 import numpy as np
-from pydub import AudioSegment
 
-from .g2p import G2pProgress
+from .audio import Clip
+from .g2p import G2p
+from .phrases import Piece, load_transcript, split_text
 
 # Each record is one phoneme of morshu.wav with its ARPAbet symbol, end time in ms, and priority.
 # A phoneme starts where the previous record ends. An empty symbol marks silence.
@@ -63,16 +64,13 @@ similar_phonemes: dict[str, list[str]] = {
 # The source recording ships inside the package, so the service needs no mounted volume.
 PACKAGED_WAV = Path(__file__).parent / "morshu.wav"
 
-# Each NLTK package that init needs, mapped to the resource path that nltk.data.find looks up.
-# g2p-en checks for and downloads its own packages when it is imported.
-_NLTK_RESOURCES = {
-    "averaged_perceptron_tagger_eng": "taggers/averaged_perceptron_tagger_eng",
-    "punkt_tab": "tokenizers/punkt_tab",
-}
-
-_g2p: G2pProgress | None = None
-_morshu_wav: AudioSegment | None = None
+_g2p: G2p | None = None
+_morshu_wav: Clip | None = None
 _wav_path: Path = PACKAGED_WAV
+_transcript = load_transcript()
+
+# A punctuation token as g2p sees it. An ellipsis is one token, like in the G2p tokenizer.
+_PUNCTUATION = re.compile(r"\.\.+|[^\s\w]")
 
 
 def source_wav_path(wav_path: str | None) -> Path:
@@ -87,30 +85,16 @@ def source_wav_path(wav_path: str | None) -> Path:
     return PACKAGED_WAV if wav_path is None else Path(wav_path)
 
 
-def _ensure_nltk_data() -> None:
-    """Downloads the NLTK packages that init needs, but only those that are missing.
-
-    The Docker image installs them at build time, so the container never downloads anything.
-    A local run without Docker downloads them once into the default NLTK data directory.
-    """
-    for package, resource in _NLTK_RESOURCES.items():
-        try:
-            nltk.data.find(resource)
-        except LookupError:
-            nltk.download(package, quiet=True)
-
-
 def init(wav_path: str | None = None) -> None:
-    """Loads the G2p model and the source WAV. Call it once at application startup.
+    """Loads the G2p model, its dictionary, and the source WAV. Call it once at startup.
 
     Args:
         wav_path: A path that overrides the packaged morshu.wav, or None to use the packaged one.
     """
     global _g2p, _morshu_wav, _wav_path
-    _ensure_nltk_data()
     _wav_path = source_wav_path(wav_path)
-    _g2p = G2pProgress()
-    _morshu_wav = AudioSegment.from_wav(_wav_path)
+    _g2p = G2p()
+    _morshu_wav = Clip.from_wav(_wav_path)
 
 
 def _ensure_loaded() -> None:
@@ -132,20 +116,22 @@ class Morshu:
             "output" is where the clip starts in the output, in milliseconds.
             "morshu" is where it starts in morshu.wav, or -1 for an inserted pause.
         canceled: Whether cancel was called during the current conversion.
+        phrase_matching: Whether word runs that morshu.wav says verbatim play as recorded.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, phrase_matching: bool = True) -> None:
         self.input_str = ""
         self.input_phonemes: list[str] = []
         self.stop_chars = ".,?!:;()\n"
         self.space_length = 20
         self.stop_length = 100
         self.use_phoneme_priority = True
-        self.out_audio = AudioSegment.empty()
+        self.out_audio: Clip | None = None
         self.audio_segment_timings = np.rec.fromarrays(
             (0, 0), names=("output", "morshu")
         )
         self.canceled = False
+        self.phrase_matching = phrase_matching
 
     def cancel(self) -> None:
         """Stops the running conversion, including the phoneme conversion."""
@@ -157,20 +143,24 @@ class Morshu:
         self,
         text: str | None = None,
         progress_callback: Callable[[int, int, int], None] | None = None,
-    ) -> AudioSegment | Literal[False]:
+    ) -> Clip | Literal[False]:
         """Converts text to Morshu speech and records where each clip came from.
 
         It loads the model and the source WAV first if init has not run yet.
+        With phrase_matching on, word runs that morshu.wav says verbatim play as recorded.
+        The phoneme engine speaks everything else.
 
         Args:
             text: The text to speak, or None to repeat the last text.
             progress_callback: Called with a stage, a step, and a total.
                 Stage 0 is the phoneme conversion and stage 1 is the audio stitching.
+                With phrase matching, the stages restart for each stretch the engine speaks.
 
         Returns:
             The stitched audio, or False when the conversion was cancelled.
         """
         _ensure_loaded()
+        assert _morshu_wav is not None
         self.canceled = False
 
         if progress_callback is None:
@@ -181,7 +171,86 @@ class Morshu:
         self.input_str = text
         text = text.replace("\n", ",,,")
 
+        pieces, trailing = (
+            split_text(text, _transcript) if self.phrase_matching else ([], "")
+        )
+        if not any(piece.recording for piece in pieces):
+            # Without a recorded run the whole text goes to the engine, exactly as before.
+            pieces, trailing = [Piece(text, "", None)], ""
+
+        output = Clip.empty(_morshu_wav.frame_rate)
+        audio_out_millis: list[int] = []
+        audio_morshu_millis: list[int] = []
+        for index, piece in enumerate(pieces):
+            if self.canceled:
+                return False
+            output = self._append_pause(
+                output,
+                piece.separator_before,
+                index > 0,
+                audio_out_millis,
+                audio_morshu_millis,
+            )
+            if piece.recording is not None:
+                start, end = piece.recording
+                output = self.append_audio_segment(
+                    output,
+                    _morshu_wav[start:end],
+                    start,
+                    audio_out_millis,
+                    audio_morshu_millis,
+                )
+                continue
+            spoken = self._speak(
+                piece.text,
+                output,
+                audio_out_millis,
+                audio_morshu_millis,
+                progress_callback,
+            )
+            if spoken is False:
+                return False
+            output = spoken
+        output = self._append_pause(
+            output, trailing, False, audio_out_millis, audio_morshu_millis
+        )
+
+        if len(output) == 0:
+            warnings.warn("returned audio segment is empty", UserWarning, stacklevel=2)
+            self.audio_segment_timings = np.rec.fromarrays(
+                (0, 0), names=("output", "morshu")
+            )
+        else:
+            self.audio_segment_timings = np.rec.fromrecords(
+                tuple(zip(audio_out_millis, audio_morshu_millis)),
+                names=("output", "morshu"),
+            )
+
+        self.out_audio = output
+        return output
+
+    def _speak(
+        self,
+        text: str,
+        output: Clip,
+        audio_out_millis: list[int],
+        audio_morshu_millis: list[int],
+        progress_callback: Callable[[int, int, int], None],
+    ) -> Clip | Literal[False]:
+        """Appends the phoneme engine's speech for a text.
+
+        Args:
+            text: The text to speak.
+            output: The output so far.
+            audio_out_millis: The output start times, which receives one entry per clip.
+            audio_morshu_millis: The morshu.wav start times, which receives one entry per clip.
+            progress_callback: Called with a stage, a step, and a total.
+
+        Returns:
+            The output with the speech appended, or False when the conversion was cancelled.
+        """
         assert _g2p is not None
+        assert _morshu_wav is not None
         phonemes = _g2p.run_with_progress(
             text, lambda step, total: progress_callback(0, step, total)
         )
@@ -190,12 +259,6 @@ class Morshu:
 
         progress_step = 0
         progress_total = len(phonemes)
-
-        assert _morshu_wav is not None
-        output = AudioSegment.empty().set_frame_rate(_morshu_wav.frame_rate)
-        audio_out_millis: list[int] = []
-        audio_morshu_millis: list[int] = []
-
         phoneme_segment: list[str] = []
         while phonemes:
             if self.canceled:
@@ -214,7 +277,7 @@ class Morshu:
             if p == " ":
                 output = self.append_audio_segment(
                     output,
-                    AudioSegment.silent(self.space_length),
+                    Clip.silent(self.space_length, _morshu_wav.frame_rate),
                     -1,
                     audio_out_millis,
                     audio_morshu_millis,
@@ -222,26 +285,54 @@ class Morshu:
             elif p in self.stop_chars:
                 output = self.append_audio_segment(
                     output,
-                    AudioSegment.silent(self.stop_length),
+                    Clip.silent(self.stop_length, _morshu_wav.frame_rate),
                     -1,
                     audio_out_millis,
                     audio_morshu_millis,
                 )
 
-        if len(output) == 0:
-            warnings.warn("returned audio segment is empty", UserWarning, stacklevel=2)
-            self.audio_segment_timings = np.rec.fromarrays(
-                (0, 0), names=("output", "morshu")
-            )
-        else:
-            self.audio_segment_timings = np.rec.fromrecords(
-                tuple(zip(audio_out_millis, audio_morshu_millis)),
-                names=("output", "morshu"),
-            )
-
         progress_callback(1, progress_total, progress_total)
-        self.out_audio = output
         return output
+
+    def pause_length(self, separator: str, between_words: bool) -> int:
+        """Returns how long the engine would pause for the text between two words.
+
+        The engine pauses for space_length at every token boundary.
+        It pauses for stop_length more at each stop character.
+
+        Args:
+            separator: The text between two pieces, such as ", " or " ".
+            between_words: Whether a word comes before the separator.
+                Only then does the boundary after that word add a pause.
+
+        Returns:
+            The pause in milliseconds.
+        """
+        marks = _PUNCTUATION.findall(separator)
+        boundaries = len(marks) + (1 if between_words else 0)
+        stops = sum(1 for mark in marks if mark in self.stop_chars)
+        return boundaries * self.space_length + stops * self.stop_length
+
+    def _append_pause(
+        self,
+        output: Clip,
+        separator: str,
+        between_words: bool,
+        audio_out_millis: list[int],
+        audio_morshu_millis: list[int],
+    ) -> Clip:
+        """Appends the pause for a separator, or nothing when it calls for none."""
+        assert _morshu_wav is not None
+        length = self.pause_length(separator, between_words)
+        if length == 0:
+            return output
+        return self.append_audio_segment(
+            output,
+            Clip.silent(length, _morshu_wav.frame_rate),
+            -1,
+            audio_out_millis,
+            audio_morshu_millis,
+        )
 
     @staticmethod
     def substitute_similar_phonemes(phonemes: list[str]) -> list[str]:
@@ -266,12 +357,12 @@ class Morshu:
 
     @staticmethod
     def append_audio_segment(
-        audio_out: AudioSegment,
-        audio_segment: AudioSegment,
+        audio_out: Clip,
+        audio_segment: Clip,
         morshu_millis_start: int,
         audio_out_millis: list[int],
         audio_morshu_millis: list[int],
-    ) -> AudioSegment:
+    ) -> Clip:
         """Appends a clip to the output and records where it starts.
 
         Args:
@@ -308,7 +399,7 @@ class Morshu:
 
     def get_best_morshu_single_phoneme(
         self, phoneme: str, preceding: str = "", succeeding: str = ""
-    ) -> tuple[AudioSegment, int]:
+    ) -> tuple[Clip, int]:
         """Picks the clip of one phoneme whose neighbors in morshu.wav fit best.
 
         A clip scores higher when its neighbors equal the given ones, or when both are vowels.
@@ -327,7 +418,7 @@ class Morshu:
         best_indices: list[int] = []
         phoneme_indices = np.where(morshu_rec["phoneme"] == phoneme)[0]
         if len(phoneme_indices) == 0:
-            return AudioSegment.empty(), 0
+            return Clip.empty(_morshu_wav.frame_rate), 0
 
         highest_priority = 0
         for i in phoneme_indices:
@@ -366,11 +457,11 @@ class Morshu:
 
     def append_best_morshu_phoneme_segment(
         self,
-        output: AudioSegment,
+        output: Clip,
         phonemes: list[str],
         audio_out_millis: list[int] | None = None,
         audio_morshu_millis: list[int] | None = None,
-    ) -> AudioSegment:
+    ) -> Clip:
         """Appends the audio of one word, built from the longest phoneme runs that morshu.wav holds.
 
         Args:
@@ -398,7 +489,7 @@ class Morshu:
         preceding = ""
         while phonemes:
             sequence_length = 1
-            segment = AudioSegment.empty()
+            segment = Clip.empty(_morshu_wav.frame_rate)
             start = 0
 
             while sequence_length <= len(phonemes):
