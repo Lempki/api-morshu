@@ -191,10 +191,16 @@ Pronunciations come from the CMU Pronouncing Dictionary that ships in `g2p_data/
 A word with several pronunciations takes the dictionary's first one.
 g2p-en guessed the part of speech for a short list of such words instead, so "the refuse" and "to refuse" now sound the same.
 
-## Credits
+## License and credits
 
-The TTS engine in `src/tts_api/morshutalk/` is adapted from [MorshuTalk](https://github.com/n0spaces/MorshuTalk) by [n0spaces](https://github.com/n0spaces), released under the [MIT License](https://github.com/n0spaces/MorshuTalk/blob/main/LICENSE.txt).
+The TTS engine in `src/tts_api/morshutalk/` is adapted from [MorshuTalk](https://github.com/n0spaces/MorshuTalk) by [n0spaces](https://github.com/n0spaces), released under the MIT License. Its license text is in `src/tts_api/morshutalk/LICENSE`.
 
 The grapheme-to-phoneme model and code in `g2p.py` and `numbers.py` are adapted from [g2p-en](https://github.com/Kyubyong/g2p) by Kyubyong Park and Jongseok Kim, released under the Apache License 2.0. Its license text is in `g2p_data/model/LICENSE`.
 
 The [CMU Pronouncing Dictionary](https://github.com/cmusphinx/cmudict) is copyright Carnegie Mellon University and ships under its BSD-style license in `g2p_data/cmudict.LICENSE`. The copy in `g2p_data/cmudict.dict.gz` comes from commit `74790861` of that repository.
+
+The source recording `morshu.wav` and the sprite frames in `morshutalk/sprites/` come from the CD-i game Link: The Faces of Evil.
+They belong to their respective rights holders, and the MIT License of this repository does not cover them.
+
+This project is licensed under the [MIT License](LICENSE).
+You may use, change, and share it, as long as every copy keeps the copyright notice and the license text.
