@@ -1,9 +1,5 @@
 extend = ".ruff-base.toml"
 
-[lint]
-# Docstring and annotation rules are switched on once the existing code meets them.
-extend-ignore = ["D", "ANN"]
-
 [lint.isort]
 known-first-party = ["tts_api"]
 
@@ -11,7 +7,7 @@ known-first-party = ["tts_api"]
 # FastAPI declares dependencies and parameters as call defaults by design.
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Security"]
 
-[lint.per-file-ignores]
+[lint.extend-per-file-ignores]
 # The fmt: off phoneme timing table holds data rows longer than the line-length limit by design.
 # zip() pairs two arrays built together in lockstep, and adding strict= is a behavior change left for a later step.
 "src/tts_api/morshutalk/morshu.py" = ["E501", "B905"]
