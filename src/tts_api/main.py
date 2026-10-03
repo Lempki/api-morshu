@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Response, status
+from pydub import AudioSegment
+from pydub.silence import detect_leading_silence
 
 from .auth import require_auth
 from .config import Settings, get_settings
@@ -53,6 +55,32 @@ class VideoEncodingError(Exception):
     """Raised when ffmpeg fails or runs past its timeout while it encodes a video."""
 
 
+# Silence is measured against the clip's own loudness, because recordings differ in level.
+# A fixed threshold such as pydub's default of -16 dBFS treats quiet speech as silence.
+_SILENCE_BELOW_AVERAGE_DB = 20.0
+
+
+def trim_edges(audio: AudioSegment) -> AudioSegment:
+    """Removes the silence before the first sound and after the last one.
+
+    Silence in the middle of the clip stays, so the pauses between words are kept.
+
+    Args:
+        audio: The synthesized clip.
+
+    Returns:
+        The clip without leading and trailing silence, or the clip unchanged when it is all silence.
+    """
+    if audio.dBFS == float("-inf"):
+        return audio
+    threshold = audio.dBFS - _SILENCE_BELOW_AVERAGE_DB
+    start = detect_leading_silence(audio, silence_threshold=threshold)
+    end = len(audio) - detect_leading_silence(
+        audio.reverse(), silence_threshold=threshold
+    )
+    return audio[start:end] if start < end else audio
+
+
 def _synthesize_blocking(text: str, speed: float, trim_silence: bool) -> bytes:
     m = Morshu()
     result = m.load_text(text)
@@ -65,7 +93,7 @@ def _synthesize_blocking(text: str, speed: float, trim_silence: bool) -> bytes:
         )
         audio = audio.set_frame_rate(result.frame_rate)
     if trim_silence:
-        audio = audio.strip_silence()
+        audio = trim_edges(audio)
     buf = io.BytesIO()
     audio.export(buf, format="wav")
     return buf.getvalue()

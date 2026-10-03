@@ -186,3 +186,37 @@ def test_ffmpeg_failure_answers_500_with_a_fixed_detail(
     message = record.getMessage()
     assert "final ffmpeg line" in message
     assert len(message) < 2500
+
+
+def _quiet_speech_with_padding() -> AudioSegment:
+    """Two quiet tones with a pause between them and silence around them."""
+    from pydub.generators import Sine
+
+    tone = Sine(440).to_audio_segment(duration=1500, volume=-24.0)
+    pause = AudioSegment.silent(duration=300)
+    return (
+        AudioSegment.silent(duration=500)
+        + tone
+        + pause
+        + tone
+        + AudioSegment.silent(duration=500)
+    )
+
+
+def test_trim_edges_keeps_quiet_speech_and_inner_pauses() -> None:
+    from tts_api.main import trim_edges
+
+    trimmed = trim_edges(_quiet_speech_with_padding())
+
+    # pydub's strip_silence() returned nothing for a clip like this.
+    # Its fixed threshold of -16 dBFS counted the -24 dBFS tones as silence.
+    # Now only the edges go, and the pause between the tones stays.
+    assert 3250 <= len(trimmed) <= 3350
+
+
+def test_trim_edges_leaves_an_all_silent_clip_unchanged() -> None:
+    from tts_api.main import trim_edges
+
+    silence = AudioSegment.silent(duration=800)
+
+    assert len(trim_edges(silence)) == 800
