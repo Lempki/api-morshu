@@ -69,13 +69,13 @@ def test_phonemes_wrong_auth() -> None:
 
 
 def test_synthesize_empty_text_rejected() -> None:
-    # min_length=1 on SynthesizeRequest.text.
+    # SynthesizeRequest.text has min_length=1.
     r = client.post("/tts/synthesize", json={"text": ""}, headers=AUTH)
     assert r.status_code == 422
 
 
 def test_synthesize_speed_too_low_rejected() -> None:
-    # ge=0.5; 0.4 is below the minimum.
+    # 0.4 is below the minimum of 0.5.
     r = client.post(
         "/tts/synthesize", json={"text": "hello", "speed": 0.4}, headers=AUTH
     )
@@ -83,7 +83,7 @@ def test_synthesize_speed_too_low_rejected() -> None:
 
 
 def test_synthesize_speed_too_high_rejected() -> None:
-    # le=2.0; 2.1 exceeds the maximum.
+    # 2.1 exceeds the maximum of 2.0.
     r = client.post(
         "/tts/synthesize", json={"text": "hello", "speed": 2.1}, headers=AUTH
     )
@@ -91,7 +91,7 @@ def test_synthesize_speed_too_high_rejected() -> None:
 
 
 def test_synthesize_invalid_format_rejected() -> None:
-    # format must be Literal["wav", "video"]; "ogg" is not accepted.
+    # format accepts only "wav" and "video", so "ogg" is rejected.
     r = client.post(
         "/tts/synthesize", json={"text": "hello", "format": "ogg"}, headers=AUTH
     )

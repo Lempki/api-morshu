@@ -1,5 +1,9 @@
-# Progress-reporting wrapper around G2p.
-# Core logic borrowed from G2p.__call__() — https://github.com/kyubyong/g2p (Apache-2.0)
+"""A G2p model that reports its progress and can be cancelled.
+
+The conversion in run_with_progress follows G2p.__call__ from https://github.com/kyubyong/g2p.
+That code is licensed under Apache-2.0.
+"""
+
 from collections.abc import Callable
 
 from g2p_en.g2p import (
@@ -14,11 +18,18 @@ from g2p_en.g2p import (
 
 
 class G2pProgress(G2p):  # type: ignore[misc]
+    """The g2p-en grapheme-to-phoneme model with progress reports and cancellation.
+
+    Attributes:
+        cancelled: Whether cancel was called during the current conversion.
+    """
+
     def __init__(self) -> None:
         super().__init__()
         self.cancelled = False
 
     def cancel(self) -> None:
+        """Stops the running conversion before its next word."""
         self.cancelled = True
 
     def run_with_progress(
@@ -26,6 +37,17 @@ class G2pProgress(G2p):  # type: ignore[misc]
         text: str,
         callback: Callable[[int, int], None] | None = None,
     ) -> list[str]:
+        """Converts text to ARPAbet phonemes the way G2p.__call__ does, one word at a time.
+
+        Args:
+            text: The text to convert.
+            callback: Called with the number of words done and the total word count.
+                It runs before each word and once more at the end.
+
+        Returns:
+            The phonemes, with a " " token between words and punctuation kept as tokens.
+            The list is empty when the conversion was cancelled.
+        """
         self.cancelled = False
 
         text = unicode(text)

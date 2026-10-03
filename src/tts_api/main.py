@@ -135,10 +135,11 @@ def _synthesize_video_blocking(text: str) -> bytes:
     output_times = timings["output"].tolist()
     morshu_times = timings["morshu"].tolist()
 
-    # Build one entry per 100 ms frame using the same formula as the MorshuTalk
-    # GUI: effective_morshu_t = morshu_start + (output_t - output_start),
-    # frame = effective_morshu_t // 100. Silence segments use frame 0.
-    frame_entries: list[tuple[int, int]] = []  # (frame_idx, duration_ms)
+    # Each entry is one 100 ms video frame, picked with the same formula as the MorshuTalk GUI.
+    # The source time is morshu_start + (output_t - output_start), and the frame is time // 100.
+    # Silence segments use frame 0.
+    # Each entry holds the frame index and the frame's duration in milliseconds.
+    frame_entries: list[tuple[int, int]] = []
     seg_idx = 0
     t = 0
     while t < total_ms:
@@ -177,8 +178,7 @@ def _synthesize_video_blocking(text: str) -> bytes:
                 sprite = (_SPRITES_DIR / f"{frame_idx}.png").as_posix()
                 f.write(f"file '{sprite}'\n")
                 f.write(f"duration {duration_ms / 1000:.3f}\n")
-            # Repeat the last file entry without a duration to prevent ffconcat
-            # from dropping the final frame.
+            # ffconcat drops the final frame unless the last file is repeated without a duration.
             last_sprite = (_SPRITES_DIR / f"{frame_entries[-1][0]}.png").as_posix()
             f.write(f"file '{last_sprite}'\n")
 

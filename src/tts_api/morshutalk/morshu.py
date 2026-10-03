@@ -1,3 +1,9 @@
+"""The Morshu text-to-speech engine, adapted from MorshuTalk by n0spaces under the MIT License.
+
+The engine converts text to phonemes.
+It then stitches clips of the same phonemes, cut from morshu.wav, into new speech.
+"""
+
 import random
 import warnings
 from collections.abc import Callable
@@ -10,6 +16,9 @@ from pydub import AudioSegment
 
 from .g2p import G2pProgress
 
+# Each record is one phoneme of morshu.wav with its ARPAbet symbol, end time in ms, and priority.
+# A phoneme starts where the previous record ends. An empty symbol marks silence.
+# Single-phoneme matching prefers records with a higher priority.
 # fmt: off
 morshu_rec = np.rec.fromrecords([
     ('', 160, 0), ('L', 250, 2), ('AE', 348, 2), ('M', 420, 2), ('P', 510, 1),
@@ -40,6 +49,7 @@ morshu_rec = np.rec.fromrecords([
 ], names=('phoneme', 'timing', 'priority'))
 # fmt: on
 
+# Phonemes that morshu.wav lacks, mapped to the phonemes that stand in for them.
 similar_phonemes: dict[str, list[str]] = {
     "AW": ["AE", "UW"],
     "DH": ["D"],
@@ -109,6 +119,21 @@ def _ensure_loaded() -> None:
 
 
 class Morshu:
+    """Turns text into Morshu speech and remembers where each clip came from.
+
+    Attributes:
+        input_str: The text of the last conversion.
+        stop_chars: The characters that insert a longer pause.
+        space_length: The pause between words, in milliseconds.
+        stop_length: The pause at a stop character, in milliseconds.
+        use_phoneme_priority: Whether single-phoneme matching starts from each record's priority.
+        out_audio: The audio of the last conversion.
+        audio_segment_timings: One record per appended clip.
+            "output" is where the clip starts in the output, in milliseconds.
+            "morshu" is where it starts in morshu.wav, or -1 for an inserted pause.
+        canceled: Whether cancel was called during the current conversion.
+    """
+
     def __init__(self) -> None:
         self.input_str = ""
         self.input_phonemes: list[str] = []
@@ -123,6 +148,7 @@ class Morshu:
         self.canceled = False
 
     def cancel(self) -> None:
+        """Stops the running conversion, including the phoneme conversion."""
         if _g2p is not None:
             _g2p.cancel()
         self.canceled = True
@@ -132,6 +158,18 @@ class Morshu:
         text: str | None = None,
         progress_callback: Callable[[int, int, int], None] | None = None,
     ) -> AudioSegment | Literal[False]:
+        """Converts text to Morshu speech and records where each clip came from.
+
+        It loads the model and the source WAV first if init has not run yet.
+
+        Args:
+            text: The text to speak, or None to repeat the last text.
+            progress_callback: Called with a stage, a step, and a total.
+                Stage 0 is the phoneme conversion and stage 1 is the audio stitching.
+
+        Returns:
+            The stitched audio, or False when the conversion was cancelled.
+        """
         _ensure_loaded()
         self.canceled = False
 
@@ -207,6 +245,14 @@ class Morshu:
 
     @staticmethod
     def substitute_similar_phonemes(phonemes: list[str]) -> list[str]:
+        """Removes stress digits and replaces phonemes that morshu.wav lacks.
+
+        Args:
+            phonemes: The phonemes to rewrite. Stress digits are removed from this list in place.
+
+        Returns:
+            The phonemes with every missing phoneme replaced by its stand-ins.
+        """
         i = 0
         while i < len(phonemes):
             p = phonemes[i]
@@ -226,12 +272,32 @@ class Morshu:
         audio_out_millis: list[int],
         audio_morshu_millis: list[int],
     ) -> AudioSegment:
+        """Appends a clip to the output and records where it starts.
+
+        Args:
+            audio_out: The output so far.
+            audio_segment: The clip to append.
+            morshu_millis_start: Where the clip starts in morshu.wav, or -1 for a pause.
+            audio_out_millis: The output start times, which receives the clip's start.
+            audio_morshu_millis: The morshu.wav start times, which receives morshu_millis_start.
+
+        Returns:
+            The output with the clip appended.
+        """
         audio_out_millis.append(len(audio_out))
         audio_morshu_millis.append(morshu_millis_start)
         return audio_out + audio_segment
 
     @staticmethod
     def get_phoneme_sequence_occurrences(phonemes: list[str]) -> list[tuple[int, int]]:
+        """Finds every place where morshu.wav says the phonemes in a row.
+
+        Args:
+            phonemes: The phoneme sequence to find.
+
+        Returns:
+            The start and end of each occurrence in morshu.wav, in milliseconds.
+        """
         occurrences = []
         for i in range(len(morshu_rec) - len(phonemes)):
             if (morshu_rec["phoneme"][i : i + len(phonemes)] == phonemes).all():
@@ -243,6 +309,20 @@ class Morshu:
     def get_best_morshu_single_phoneme(
         self, phoneme: str, preceding: str = "", succeeding: str = ""
     ) -> tuple[AudioSegment, int]:
+        """Picks the clip of one phoneme whose neighbors in morshu.wav fit best.
+
+        A clip scores higher when its neighbors equal the given ones, or when both are vowels.
+        A random clip among the best scores is chosen.
+
+        Args:
+            phoneme: The phoneme to find.
+            preceding: The phoneme before it in the output, or "" for none.
+            succeeding: The phoneme after it in the output, or "" for none.
+
+        Returns:
+            The clip and where it starts in morshu.wav, in milliseconds.
+            The clip is empty when morshu.wav never says the phoneme.
+        """
         assert _morshu_wav is not None
         best_indices: list[int] = []
         phoneme_indices = np.where(morshu_rec["phoneme"] == phoneme)[0]
@@ -291,6 +371,17 @@ class Morshu:
         audio_out_millis: list[int] | None = None,
         audio_morshu_millis: list[int] | None = None,
     ) -> AudioSegment:
+        """Appends the audio of one word, built from the longest phoneme runs that morshu.wav holds.
+
+        Args:
+            output: The output so far.
+            phonemes: The phonemes of the word. The list is emptied as they are used.
+            audio_out_millis: The output start times, which receives one entry per clip.
+            audio_morshu_millis: The morshu.wav start times, which receives one entry per clip.
+
+        Returns:
+            The output with the word appended.
+        """
         assert _morshu_wav is not None
         phonemes = Morshu.substitute_similar_phonemes(phonemes)
         if audio_out_millis is None:
