@@ -4,6 +4,7 @@ name: api-morshu
 
 services:
   tts:
+    image: ghcr.io/lempki/api-morshu:latest
     build: .
     ports:
       - "8002:8000"
